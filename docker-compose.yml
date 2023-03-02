@@ -1,0 +1,152 @@
+version: '3.8'
+
+services:
+  # Using Traefik as the reverse proxy for the website
+  traefik:
+    image: traefik:${TRAEFIK_VER}
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+    command:
+      - --accesslog
+      - --log.level=WARN # WARN provides more helpful information - ERROR is the default. INFO is another option.
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.web.http.redirections.entrypoint.permanent=true
+      #- --providers.docker.middlewares=http2@docker
+      - --providers.file.directory=/etc/traefik/dynamic_conf
+      - --providers.file.watch=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./certs/:/certs/:ro
+      - ./traefik.yml:/etc/traefik/dynamic_conf/conf.yml:ro
+    networks:
+      - traefik
+      - web
+  # Using mariadb as the MySql database because it's a high perfomamce database
+  mariadb:
+    image: mariadb:${MARIADB_VER}
+    container_name: mariadb
+    restart: unless-stopped
+    #env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes: 
+      - dbdata:/var/lib/mysql
+    networks:
+      - web
+  # Using the Wordpress-fpm image optimized for high performance. PHP-FPM makes php applications fast.
+  wordpress:
+    depends_on: 
+      - mariadb
+      - redis
+    image: wordpress:${WORDPRESS_VER}
+    container_name: wordpress
+    restart: unless-stopped
+    #env_file: .env
+    environment:
+      WORDPRESS_DB_HOST: ${WORDPRESS_DB_HOST}
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: ${WORDPRESS_TABLE_PREFIX}
+      WORDPRESS_DEBUG: 0
+      WORDPRESS_CONFIG_EXTRA: |
+          define( 'WP_REDIS_HOST', 'redis' );
+          define( 'WP_REDIS_PORT', 6379 );
+          define( 'COMPRESS_CSS', true );
+          define( 'COMPRESS_SCRIPTS', true );
+          define( 'CONCATENATE_SCRIPTS', true );
+          define( 'ENFORCE_GZIP', true );
+          define( 'AUTOSAVE_INTERVAL', 120 );
+          define( 'WP_POST_REVISIONS', 10);
+          define( 'MEDIA_TRASH', true );
+          define( 'EMPTY_TRASH_DAYS', 30 );
+          define( 'IMAGE_EDIT_OVERWRITE', true );
+          define( 'DISALLOW_FILE_EDIT', true );
+    volumes:
+      - wordpress:/var/www/html
+      - ./php/custom.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - web
+  # Nginx is used as the web server because it support PHP-FPM engine and has better caching fucntionality
+  nginx:
+    depends_on:
+      - wordpress
+    image: nginx:${NGINX_VER}
+    container_name: nginx
+    restart: unless-stopped
+    labels:
+    # http with redirection
+      - traefik.enable=true
+      - traefik.docker.network=traefik
+      - traefik.http.routers.wp.entrypoints=web,websecure
+      - traefik.http.routers.wp.tls=true
+      - traefik.http.routers.wp.rule=Host(`${URL}`, `${URL_WWW}`)
+      - traefik.http.routers.wp.service=wp
+      - traefik.http.services.wp.loadbalancer.server.port=80
+      #- traefik.http.middlewares.http2.protocol.h2=true
+    # https
+      # - traefik.http.routers.wpsecure.entrypoints=websecure
+      # - traefik.http.routers.wpsecure.tls=true
+      # - traefik.http.routers.wpsecure.rule=Host(`${URL}`, `${URL_WWW}`)
+      # - traefik.http.routers.wpsecure.service=wpsecure
+      # - traefik.http.services.wpsecure.loadbalancer.server.port=80
+
+    volumes:
+      - wordpress:/var/www/html
+      - ./nginx:/etc/nginx/conf.d
+      - ./certs:/etc/ssl/certs  
+      #- certbot-etc:/etc/letsencrypt
+    networks:
+      - web
+      - traefik
+  # Redis
+  # Add Redis as a Database Object Cache for WordPress
+  redis:
+    image: redis:${REDIS_VER}
+    container_name: redis
+    restart: unless-stopped
+    command: 
+      - redis-server
+      - --save 60 500 # This config will make Redis automatically dump the dataset to disk every 60 seconds if at least 500 keys changed:
+      - --loglevel warning
+      - --maxmemory 128mb 
+      - --maxmemory-policy allkeys-lfu # Keeps frequently used keys; removes least frequently used (LFU) keys
+    volumes:
+      - redis:/data
+    networks:
+      - web
+  #certbot:
+  #  depends_on:
+  #    - nginx
+  #  image: certbot/certbot
+  #  container_name: certbot
+  #  volumes:
+  #    - certbot-etc:/etc/letsencrypt
+  #    - wordpress:/var/www/html
+  #  command: certonly --webroot --webroot-path=/var/www/html --email sammy@your_domain --agree-tos --no-eff-email --force-renewal -d your_domain -d www.your_domain
+
+volumes:
+  #certbot-etc:
+  wordpress:
+  dbdata:
+  redis:
+
+networks:
+  web:
+    external: false
+  traefik:
+    external: true
+  
