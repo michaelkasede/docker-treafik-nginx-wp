@@ -21,7 +21,6 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --entrypoints.web.http.redirections.entrypoint.permanent=true
-      #- --providers.docker.middlewares=http2@docker
       - --providers.file.directory=/etc/traefik/dynamic_conf
       - --providers.file.watch=true
     volumes:
@@ -36,7 +35,6 @@ services:
     image: mariadb:${MARIADB_VER}
     container_name: mariadb
     restart: unless-stopped
-    #env_file: .env
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -54,17 +52,16 @@ services:
     image: wordpress:${WORDPRESS_VER}
     container_name: wordpress
     restart: unless-stopped
-    #env_file: .env
     environment:
       WORDPRESS_DB_HOST: ${WORDPRESS_DB_HOST}
       WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
       WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
       WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
       WORDPRESS_TABLE_PREFIX: ${WORDPRESS_TABLE_PREFIX}
-      WORDPRESS_DEBUG: 0
       WORDPRESS_CONFIG_EXTRA: |
           define( 'WP_REDIS_HOST', 'redis' );
           define( 'WP_REDIS_PORT', 6379 );
+          define( 'WP_DEBUG', false );
           define( 'COMPRESS_CSS', true );
           define( 'COMPRESS_SCRIPTS', true );
           define( 'CONCATENATE_SCRIPTS', true );
@@ -96,8 +93,7 @@ services:
       - traefik.http.routers.wp.rule=Host(`${URL}`, `${URL_WWW}`)
       - traefik.http.routers.wp.service=wp
       - traefik.http.services.wp.loadbalancer.server.port=80
-      #- traefik.http.middlewares.http2.protocol.h2=true
-    # https
+      # https
       # - traefik.http.routers.wpsecure.entrypoints=websecure
       # - traefik.http.routers.wpsecure.tls=true
       # - traefik.http.routers.wpsecure.rule=Host(`${URL}`, `${URL_WWW}`)
